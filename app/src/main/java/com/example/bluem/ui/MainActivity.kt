@@ -9,40 +9,59 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
-import android.widget.Button
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import androidx.viewpager2.widget.ViewPager2
 import com.example.bluem.R
+import com.example.bluem.ble.PingData // Assuming PingData is in this package
 import com.example.bluem.service.BluemEmergencyService
+import com.example.bluem.ui.PingsFragment // Ensure this import is correct
+// import com.example.bluem.ui.adapter.ViewPagerAdapter // Import your ViewPagerAdapter
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.tabs.TabLayout
+import com.google.android.material.tabs.TabLayoutMediator
+import com.example.bluem.ui.ViewPagerAdapter
+
+
 
 class MainActivity : AppCompatActivity() {
 
 	private val TAG = "MainActivity"
-	private lateinit var statusTextView: TextView
-	private lateinit var pingButton: Button
+	private lateinit var viewPager: ViewPager2
+	private lateinit var tabLayout: TabLayout
+	private lateinit var viewPagerAdapter: ViewPagerAdapter
+	private lateinit var pingFab: FloatingActionButton
 
-	@Volatile private var isServicePinging = false // More descriptive name
-	@Volatile private var isServiceScanning = false // Track scanning state from service
+	@Volatile private var isServicePinging = false
+	@Volatile private var isServiceScanning = false // To know if service is generally active
 	private var requiredPermissionsGranted = false
 
 	private var bleService: BluemEmergencyService? = null
 	@Volatile private var isBound = false
 
 	private lateinit var localBroadcastManager: LocalBroadcastManager
-	private val stateUpdateReceiver = object : BroadcastReceiver() {
-		override fun onReceive(context: Context, intent: Intent) {
-			if (intent.action == BluemEmergencyService.ACTION_STATE_CHANGED) {
-				val advertisingState = intent.getBooleanExtra(BluemEmergencyService.EXTRA_IS_ADVERTISING, false)
-				val scanningState = intent.getBooleanExtra(BluemEmergencyService.EXTRA_IS_SCANNING, false) // Get scanning state
-				Log.d(TAG, "Broadcast Received: Adv=$advertisingState, Scan=$scanningState")
 
-				isServicePinging = advertisingState
-				isServiceScanning = scanningState // Update local scanning state
-				updateUiBasedOnState()
+	// Combined receiver for service state and ping data
+	private val appEventsReceiver = object : BroadcastReceiver() {
+		override fun onReceive(context: Context, intent: Intent) {
+			when (intent.action) {
+				BluemEmergencyService.ACTION_STATE_CHANGED -> {
+					isServicePinging = intent.getBooleanExtra(BluemEmergencyService.EXTRA_IS_ADVERTISING, false)
+					isServiceScanning = intent.getBooleanExtra(BluemEmergencyService.EXTRA_IS_SCANNING, false)
+					Log.d(TAG, "Broadcast Received (State): Adv=$isServicePinging, Scan=$isServiceScanning")
+					updateFabState() // Update FAB based on new state
+				}
+				BluemEmergencyService.ACTION_PING_RECEIVED -> { // Listen for ping data
+					val deviceAddress = intent.getStringExtra(BluemEmergencyService.EXTRA_DEVICE_ADDRESS)
+					val rssi = intent.getIntExtra(BluemEmergencyService.EXTRA_RSSI, -127)
+					if (deviceAddress != null) {
+						Log.d(TAG, "Broadcast Received (Ping Data): Addr=$deviceAddress, RSSI=$rssi")
+						deliverPingToFragment(deviceAddress, rssi)
+					}
+				}
 			}
 		}
 	}
@@ -58,77 +77,82 @@ class MainActivity : AppCompatActivity() {
 					Log.d(TAG, "Permission $permission granted.")
 				}
 			}
-
+			requiredPermissionsGranted = allGranted
 			if (allGranted) {
 				Log.d(TAG, "All required permissions granted.")
-				requiredPermissionsGranted = true
-				tryStartServiceAndBind() // Try to start/bind now
+				tryStartServiceAndBind()
 			} else {
 				Log.e(TAG, "One or more permissions were denied.")
-				requiredPermissionsGranted = false
 				Toast.makeText(this, "Permissions are required for BLE features.", Toast.LENGTH_LONG).show()
-				updateUiBasedOnState() // Update UI to reflect missing perms
 			}
+			updateFabState() // Update UI based on permission status
 		}
 
 	private val requestEnableBluetooth =
 		registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
 			if (result.resultCode == RESULT_OK) {
 				Log.d(TAG, "Bluetooth enabled by user.")
-				tryStartServiceAndBind() // Try to start/bind now
+				tryStartServiceAndBind()
 			} else {
 				Log.e(TAG, "Bluetooth enabling was denied or failed.")
 				Toast.makeText(this, "Bluetooth must be enabled.", Toast.LENGTH_SHORT).show()
-				updateUiBasedOnState() // Update UI to reflect BT disabled
 			}
+			updateFabState() // Update UI based on BT status
 		}
 
-	private val serviceConnection = object : ServiceConnection { // Renamed for clarity
+	private val serviceConnection = object : ServiceConnection {
 		override fun onServiceConnected(className: ComponentName, service: IBinder) {
 			Log.d(TAG, "Service Bound")
 			val binder = service as BluemEmergencyService.LocalBinder
 			bleService = binder.getService()
 			isBound = true
-
 			// Query initial state from service when first bound
 			isServicePinging = binder.isCurrentlyAdvertising()
 			isServiceScanning = binder.isCurrentlyScanning()
-			Log.d(TAG, "Initial Service State: Adv=$isServicePinging, Scan=$isServiceScanning")
-			updateUiBasedOnState()
+			Log.d(TAG, "Initial Service State from Binder: Adv=$isServicePinging, Scan=$isServiceScanning")
+			updateFabState()
 		}
 
 		override fun onServiceDisconnected(arg0: ComponentName) {
 			Log.w(TAG, "Service Unbound/Disconnected")
 			isBound = false
 			bleService = null
-			isServicePinging = false // Assume stopped
+			isServicePinging = false
 			isServiceScanning = false
-			updateUiBasedOnState()
+			updateFabState()
 		}
 	}
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
+		// Ensure this layout is your activity_main.xml with ViewPager2, TabLayout, and FAB
 		setContentView(R.layout.activity_main)
 
 		localBroadcastManager = LocalBroadcastManager.getInstance(this)
 
-		statusTextView = findViewById(R.id.statusTextView)
-		pingButton = findViewById(R.id.pingButton)
+		viewPager = findViewById(R.id.viewPager)
+		tabLayout = findViewById(R.id.tabLayout)
+		pingFab = findViewById(R.id.pingFab) // Make sure this ID matches your activity_main.xml
 
-		pingButton.setOnClickListener {
+		viewPagerAdapter = ViewPagerAdapter(this) // Make sure ViewPagerAdapter is created
+		viewPager.adapter = viewPagerAdapter
+
+		TabLayoutMediator(tabLayout, viewPager) { tab, position ->
+			tab.text = viewPagerAdapter.getPageTitle(position)
+		}.attach()
+
+		pingFab.setOnClickListener {
 			if (!isBound || bleService == null) {
 				Toast.makeText(this, "Service not ready. Trying to connect...", Toast.LENGTH_SHORT).show()
-				tryStartServiceAndBind() // Attempt to reconnect if not bound
+				tryStartServiceAndBind()
 				return@setOnClickListener
 			}
 			if (!requiredPermissionsGranted) {
-				Toast.makeText(this, "Grant permissions first.", Toast.LENGTH_SHORT).show()
-				checkAndRequestPermissions()
+				checkAndRequestPermissions() // Let checkAndRequestPermissions handle toast
 				return@setOnClickListener
 			}
 			if (!isBluetoothEnabled()) {
-				promptEnableBluetooth()
+				promptEnableBluetooth() // Let promptEnableBluetooth handle toast
 				return@setOnClickListener
 			}
 
@@ -137,78 +161,73 @@ class MainActivity : AppCompatActivity() {
 			} else {
 				sendCommandToService(BluemEmergencyService.ACTION_START_PINGING)
 			}
+			// UI (FAB) will update when broadcast is received
 		}
-		updateUiBasedOnState() // Initial UI state
+
+		updateFabState() // Set initial FAB state
 		checkAndRequestPermissions()
 	}
 
 	override fun onStart() {
 		super.onStart()
-		val intentFilter = IntentFilter(BluemEmergencyService.ACTION_STATE_CHANGED)
-		localBroadcastManager.registerReceiver(stateUpdateReceiver, intentFilter)
-		// Attempt to bind if everything is ready
+		val intentFilter = IntentFilter().apply {
+			addAction(BluemEmergencyService.ACTION_STATE_CHANGED)
+			addAction(BluemEmergencyService.ACTION_PING_RECEIVED) // Listen for ping data
+		}
+		localBroadcastManager.registerReceiver(appEventsReceiver, intentFilter)
+
 		if (requiredPermissionsGranted && isBluetoothEnabled()) {
 			tryBindToService()
+		} else {
+			Log.w(TAG, "Not binding in onStart: Perms=$requiredPermissionsGranted, BT=${isBluetoothEnabled()}")
 		}
 	}
 
 	override fun onStop() {
 		super.onStop()
-		localBroadcastManager.unregisterReceiver(stateUpdateReceiver)
+		localBroadcastManager.unregisterReceiver(appEventsReceiver)
 		if (isBound) {
 			Log.d(TAG, "Unbinding from service in onStop")
 			unbindService(serviceConnection)
 			isBound = false
-			// bleService = null; // Keep service ref if needed till onDestroy, but binding is gone
+			// Don't nullify bleService here, might be needed if activity is just paused/stopped temporarily
 		}
 	}
 
-	private fun updateUiBasedOnState() {
+	// Updated to control FAB state
+	private fun updateFabState() {
 		runOnUiThread {
-			val sb = StringBuilder("Status: ")
 			if (!requiredPermissionsGranted) {
-				sb.append("Permissions Required")
-				pingButton.text = "Grant Permissions"
-				pingButton.isEnabled = true // Allow clicking to re-trigger permission request
+				pingFab.isEnabled = true // Allow clicking to grant permissions
+				pingFab.setImageResource(R.drawable.ic_warning) // Example: warning icon
+				// Consider changing FAB's role or hiding if perms are critical prerequisite
 			} else if (!isBluetoothEnabled()) {
-				sb.append("Bluetooth Disabled")
-				pingButton.text = "Enable Bluetooth"
-				pingButton.isEnabled = true // Allow clicking to re-trigger BT enable
+				pingFab.isEnabled = true // Allow clicking to enable BT
+				pingFab.setImageResource(R.drawable.ic_launcher_background) // Example: BT disabled icon
 			} else if (!isBound) {
-				sb.append("Service Connecting...")
-				pingButton.text = "Wait..."
-				pingButton.isEnabled = false
+				pingFab.isEnabled = false // Disabled while service is connecting
+				pingFab.setImageResource(R.drawable.ic_warning) // Example: connecting icon
 			} else {
 				// Service is bound, permissions OK, BT OK
-				if (isServicePinging && isServiceScanning) {
-					sb.append("Pinging & Listening")
-					pingButton.text = "Stop Pinging"
-				} else if (isServiceScanning) {
-					sb.append("Listening for Pings")
-					pingButton.text = "Start Pinging"
-				} else if (isServicePinging) { // Scanning might have failed but advertising is on
-					sb.append("Pinging (Scan Error?)")
-					pingButton.text = "Stop Pinging"
+				pingFab.isEnabled = true
+				if (isServicePinging) {
+					pingFab.setImageResource(R.drawable.ic_launcher_background) // Icon for "Stop Pinging"
+				} else {
+					pingFab.setImageResource(R.drawable.ic_launcher_background) // Icon for "Start Pinging"
 				}
-				else {
-					sb.append("Service Idle or Error")
-					pingButton.text = "Start Pinging" // Default action if idle
-				}
-				pingButton.isEnabled = true
 			}
-			statusTextView.text = sb.toString()
 		}
 	}
 
 	private fun checkAndRequestPermissions() {
 		val permissionsToRequest = mutableListOf<String>()
+		// Add SDK_INT checks for specific permissions
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // Android 12+
 			permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN)
 			permissionsToRequest.add(Manifest.permission.BLUETOOTH_ADVERTISE)
 			permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
 		}
-		// Location is always good to have for BLE, especially pre-Android 12
-		permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+		permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION) // Still good for consistency
 
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
 			permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -221,12 +240,13 @@ class MainActivity : AppCompatActivity() {
 		if (yetToGrant.isEmpty()) {
 			Log.d(TAG, "All required permissions already granted.")
 			requiredPermissionsGranted = true
-			tryStartServiceAndBind()
+			tryStartServiceAndBind() // Proceed if permissions are good
 		} else {
 			Log.d(TAG, "Requesting permissions: ${yetToGrant.joinToString()}")
-			requiredPermissionsGranted = false
+			requiredPermissionsGranted = false // Set to false until granted
 			requestMultiplePermissions.launch(yetToGrant)
 		}
+		updateFabState() // Update UI after checking
 	}
 
 	private fun isBluetoothEnabled(): Boolean {
@@ -235,30 +255,34 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	private fun promptEnableBluetooth() {
-		if (!isBluetoothEnabled()) {
+		if (!isBluetoothEnabled()) { // Check again to avoid redundant prompts
 			val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
+			// BLUETOOTH_CONNECT permission is needed for this on SDK 31+
 			if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
 				ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
 				requestEnableBluetooth.launch(enableBtIntent)
 			} else {
 				Log.e(TAG, "Missing BLUETOOTH_CONNECT to prompt enable BT.")
-				Toast.makeText(this, "Bluetooth Connect permission needed.", Toast.LENGTH_SHORT).show()
+				Toast.makeText(this, "Bluetooth Connect permission needed to enable Bluetooth.", Toast.LENGTH_LONG).show()
+				// Consider directing user to settings or re-requesting BLUETOOTH_CONNECT
 			}
 		}
 	}
 
 	private fun tryStartServiceAndBind() {
 		if (requiredPermissionsGranted && isBluetoothEnabled()) {
-			Log.d(TAG, "Prerequisites met. Starting service and attempting to bind.")
-			startBleService() // Start if not already running
-			tryBindToService()  // Attempt to bind
+			Log.d(TAG, "Prerequisites met. Ensuring service is started and attempting to bind.")
+			startBleServiceIfNotRunning() // Start if not already running
+			tryBindToService()
 		} else {
-			Log.w(TAG, "Cannot start/bind service yet. Permissions: $requiredPermissionsGranted, BT: ${isBluetoothEnabled()}")
-			updateUiBasedOnState() // Reflect current prerequisites
+			Log.w(TAG, "Cannot start/bind service yet. Perms=$requiredPermissionsGranted, BT=${isBluetoothEnabled()}")
+			updateFabState() // Reflect that prerequisites are not met
 		}
 	}
 
-	private fun startBleService() {
+	// Renamed for clarity
+	private fun startBleServiceIfNotRunning() {
+		// Check if service is running could be added here, but startService is safe to call multiple times
 		Log.d(TAG, "Ensuring BluemEmergencyService is started.")
 		val serviceIntent = Intent(this, BluemEmergencyService::class.java)
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -272,17 +296,15 @@ class MainActivity : AppCompatActivity() {
 		if (!isBound && requiredPermissionsGranted && isBluetoothEnabled()) {
 			Log.d(TAG, "Attempting to bind to BluemEmergencyService.")
 			val bindIntent = Intent(this, BluemEmergencyService::class.java)
+			// BIND_AUTO_CREATE will also start the service if it's not already running
+			// and if it has been declared in the manifest.
 			bindService(bindIntent, serviceConnection, Context.BIND_AUTO_CREATE)
 		} else if (isBound) {
-			Log.d(TAG,"Already bound. Requesting current state from service.")
-			// If already bound, tell service to send its current state again
-			bleService?.LocalBinder()?.getService()?.let {
-				// This is a bit hacky, ideally service sends state on rebind or explicit request
-				// For now, rely on existing broadcastState in onBind/onRebind
-				// Or add a new command to service: ACTION_REQUEST_STATE_UPDATE
-			}
+			Log.d(TAG,"Already bound. Service should send its state.")
+			// Service sends state onBind and onRebind, so this should be covered.
+			// If needed, could explicitly request state update via a command.
 		} else {
-			Log.d(TAG, "Not binding: Bound=$isBound, Perms=$requiredPermissionsGranted, BT=${isBluetoothEnabled()}")
+			Log.w(TAG, "Not binding: Bound=$isBound, Perms=$requiredPermissionsGranted, BT=${isBluetoothEnabled()}")
 		}
 	}
 
@@ -291,6 +313,27 @@ class MainActivity : AppCompatActivity() {
 		val serviceIntent = Intent(this, BluemEmergencyService::class.java).apply {
 			this.action = action
 		}
-		startService(serviceIntent) // Safe to call even if service is running
+		startService(serviceIntent) // Ensures service processes command
+	}
+
+	// Method to deliver pings to the PingsFragment
+	fun deliverPingToFragment(deviceAddress: String, rssi: Int) {
+		try {
+			// Try to find PingsFragment by its tag (ViewPager2 default for position 0 is "f0")
+			// Or iterate through supportFragmentManager.fragments
+			val fragment = supportFragmentManager.findFragmentByTag("f0") // Default tag for first fragment
+			if (fragment is PingsFragment) {
+				fragment.updatePings(PingData(deviceAddress, System.currentTimeMillis(), rssi, isActive = true))
+			} else {
+				Log.w(TAG, "PingsFragment (tag f0) not found or not the correct type. Ping for $deviceAddress not delivered to UI.")
+				// If not found, try iterating (less efficient but more robust if tags change)
+				supportFragmentManager.fragments.find { it is PingsFragment }?.let { foundFragment ->
+					(foundFragment as PingsFragment).updatePings(PingData(deviceAddress, System.currentTimeMillis(), rssi, isActive = true))
+					Log.d(TAG, "Delivered ping to PingsFragment found by type.")
+				} ?: Log.e(TAG, "PingsFragment completely not found.")
+			}
+		} catch (e: Exception) {
+			Log.e(TAG, "Error delivering ping to fragment: ${e.message}", e)
+		}
 	}
 }

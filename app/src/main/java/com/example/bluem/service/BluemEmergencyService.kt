@@ -18,7 +18,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
-import android.widget.Toast // Added Toast
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -36,12 +36,12 @@ class BluemEmergencyService : Service() {
 	@Volatile private var isScanningNow = false
 
 	private lateinit var bluetoothManager: BluetoothManager
-	private var bluetoothAdapter: BluetoothAdapter? = null // Made nullable for safety
+	private var bluetoothAdapter: BluetoothAdapter? = null
 	private var advertiser: BluetoothLeAdvertiser? = null
 	private var scanner: BluetoothLeScanner? = null
 
 	private lateinit var localBroadcastManager: LocalBroadcastManager
-	private val mainHandler = Handler(Looper.getMainLooper()) // For Toasts from service
+	private val mainHandler = Handler(Looper.getMainLooper())
 
 	companion object {
 		const val ACTION_START_PINGING = "com.example.bluem.action.START_PINGING"
@@ -50,6 +50,11 @@ class BluemEmergencyService : Service() {
 		const val ACTION_STATE_CHANGED = "com.example.bluem.action.STATE_CHANGED"
 		const val EXTRA_IS_ADVERTISING = "com.example.bluem.extra.IS_ADVERTISING"
 		const val EXTRA_IS_SCANNING = "com.example.bluem.extra.IS_SCANNING"
+
+		// Actions and Extras for sending ping data to UI
+		const val ACTION_PING_RECEIVED = "com.example.bluem.action.PING_RECEIVED" // Added
+		const val EXTRA_DEVICE_ADDRESS = "com.example.bluem.extra.DEVICE_ADDRESS" // Added
+		const val EXTRA_RSSI = "com.example.bluem.extra.RSSI"                     // Added
 	}
 
 	inner class LocalBinder : Binder() {
@@ -60,7 +65,7 @@ class BluemEmergencyService : Service() {
 
 	override fun onBind(intent: Intent?): IBinder? {
 		Log.d(TAG, "Service onBind")
-		broadcastState() // Send current state to newly bound client
+		broadcastState()
 		return binder
 	}
 
@@ -79,51 +84,59 @@ class BluemEmergencyService : Service() {
 		super.onCreate()
 		Log.d(TAG, "Service onCreate")
 		localBroadcastManager = LocalBroadcastManager.getInstance(this)
-
-		if (!initBluetoothAndContinue()) { // Renamed and modified flow
-			// Error handled and notification updated within initBluetoothAndContinue
-			return // Don't proceed if critical BT setup failed
+		if (!initBluetoothAndContinue()) {
+			// Error is logged, notification might be updated. Service might stop itself.
+			return
 		}
-		// If initBluetoothAndContinue was successful, scanning should be started within it.
 	}
 
-	// Combined init and initial actions
 	private fun initBluetoothAndContinue(): Boolean {
 		if (!setupBluetoothComponents()) {
-			updateNotification("Bluetooth Error: Not available")
-			// Potentially stopSelf if BT is critical and unrecoverable
+			// Create channel first if not already, then update notification
+			createNotificationChannel() // Ensure channel exists before showing error notification
+			updateNotification("Bluetooth Error: Setup Failed")
+			// Consider stopping service if BT is essential and init fails repeatedly
+			// stopSelf(); // Or schedule a retry
 			return false
 		}
-		createNotificationChannel() // Create channel AFTER confirming BT might work
-		startForeground(NOTIFICATION_ID, createNotification("Initializing..."))
-		startScanning() // Start scanning by default
+		createNotificationChannel()
+		startForeground(NOTIFICATION_ID, createNotification("Initializing Service..."))
+		startScanning() // Start scanning by default after successful init
 		return true
 	}
 
-
 	@SuppressLint("MissingPermission")
 	private fun setupBluetoothComponents(): Boolean {
-		// Check for BT permissions first - crucial
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-			if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED ||
-				ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED ||
-				ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_ADVERTISE) != PackageManager.PERMISSION_GRANTED) {
-				Log.e(TAG, "Missing core Bluetooth permissions (SDK 31+). Cannot initialize.")
-				showToast("Error: Missing Bluetooth Permissions")
+		// Permission checks (ensure these are sufficient for your min/target SDKs)
+		val hasBtConnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+		val hasBtScan = hasPermission(Manifest.permission.BLUETOOTH_SCAN)
+		val hasBtAdvertise = hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+		val hasFineLocation = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) { // Android 12+
+			if (!hasBtConnect || !hasBtScan || !hasBtAdvertise) {
+				Log.e(TAG, "Missing core Bluetooth permissions (SDK 31+). Connect:$hasBtConnect, Scan:$hasBtScan, Adv:$hasBtAdvertise")
+				showToast("Error: Bluetooth Permissions Missing")
 				return false
 			}
-		} else {
-			// Pre-SDK31, BLUETOOTH and BLUETOOTH_ADMIN are manifest only, ACCESS_FINE_LOCATION for scan
-			if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-				Log.e(TAG, "Missing Fine Location permission for BLE Scan (Pre-SDK 31). Cannot initialize.")
-				showToast("Error: Missing Location Permission for Scan")
+		} else { // Pre-Android 12
+			if (!hasFineLocation) { // ACCESS_FINE_LOCATION is key for scanning
+				Log.e(TAG, "Missing Fine Location permission for BLE Scan (Pre-SDK 31).")
+				showToast("Error: Location Permission Missing for Scan")
 				return false
 			}
+			// BLUETOOTH and BLUETOOTH_ADMIN are manifest-only pre-S, no runtime check needed here for them
 		}
 
+		try {
+			bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+			bluetoothAdapter = bluetoothManager.adapter
+		} catch (e: Exception) {
+			Log.e(TAG, "Failed to get BluetoothManager or Adapter: ${e.message}", e)
+			showToast("Bluetooth system service error")
+			return false
+		}
 
-		bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-		bluetoothAdapter = bluetoothManager.adapter
 
 		if (bluetoothAdapter == null) {
 			Log.e(TAG, "Bluetooth is not supported on this device.")
@@ -132,52 +145,53 @@ class BluemEmergencyService : Service() {
 		}
 		if (bluetoothAdapter?.isEnabled == false) {
 			Log.e(TAG, "Bluetooth is not enabled.")
-			showToast("Bluetooth not enabled")
-			return false // Indicate failure, prompt user from Activity
+			showToast("Please enable Bluetooth") // Activity should prompt, service just informs
+			return false
 		}
 
 		advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
-		if (advertiser == null && bluetoothAdapter?.isMultipleAdvertisementSupported == true) { // Check if adv is supported
-			Log.w(TAG, "BLE Advertising not supported, but adapter says it might be? Odd.")
-			// Proceed cautiously or treat as not supported
-		} else if (advertiser == null) {
-			Log.e(TAG, "BLE Advertising not supported.")
-			showToast("BLE Advertising not supported")
-			// For this app, advertising is key. If not available, it's a critical failure.
-			// return false; // Decide if this is a fatal error for the service
+		if (advertiser == null) {
+			// Check if the device supports advertising at all
+			if (bluetoothAdapter?.isMultipleAdvertisementSupported == false &&
+				bluetoothAdapter?.isOffloadedFilteringSupported == false && // another hint for BLE support
+				bluetoothAdapter?.isOffloadedScanBatchingSupported == false) {
+				Log.e(TAG, "BLE Advertising seems generally unsupported on this device.")
+				showToast("BLE Advertising Not Supported")
+				// return false; // For this app, this might be a fatal error
+			} else {
+				Log.w(TAG, "BluetoothLeAdvertiser is null. Device might not support BLE advertising or there's an issue.")
+				showToast("Warning: BLE Advertising unavailable")
+				// return false; // Decide if critical
+			}
 		}
-
 
 		scanner = bluetoothAdapter?.bluetoothLeScanner
 		if (scanner == null) {
-			Log.e(TAG, "BLE Scanning not supported.")
-			showToast("BLE Scanning not supported")
-			return false // Scanning is also key
+			Log.e(TAG, "BLE Scanning not supported (BluetoothLeScanner is null).")
+			showToast("BLE Scanning Not Supported")
+			return false
 		}
 
 		Log.d(TAG, "Bluetooth Components Initialized Successfully.")
 		return true
 	}
 
-
 	override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 		val action = intent?.action
 		Log.d(TAG, "Service onStartCommand, Action: $action")
 
-		// Re-check BT status, especially if it might have been turned off externally
 		if (bluetoothAdapter == null || bluetoothAdapter?.isEnabled == false) {
-			Log.w(TAG, "Bluetooth unavailable when processing command: $action. Attempting re-init.")
-			if (!setupBluetoothComponents()) { // Try to re-initialize
-				Log.e(TAG, "Re-initialization of Bluetooth failed. Operations cannot proceed.")
-				if (isAdvertisingNow) stopAdvertising(true) // Force stop if somehow running
+			Log.w(TAG, "BT unavailable for command: $action. Attempting re-init...")
+			if (!setupBluetoothComponents()) {
+				Log.e(TAG, "BT re-init failed. Operations halted.")
+				if (isAdvertisingNow) stopAdvertising(true)
 				if (isScanningNow) stopScanning(true)
 				updateNotification("Bluetooth Error")
 				broadcastState()
-				return START_STICKY // Hope BT comes back
+				return START_STICKY
 			}
-			// If re-init successful, proceed with command
+			// If re-init successful, continue processing command
 		}
-
 
 		when (action) {
 			ACTION_START_PINGING -> startAdvertising()
@@ -187,13 +201,10 @@ class BluemEmergencyService : Service() {
 				stopService()
 				return START_NOT_STICKY
 			}
-			null -> { // Service starting or restarting
-				Log.d(TAG, "Service starting/restarting. Current scan: $isScanningNow, adv: $isAdvertisingNow")
-				if (!isScanningNow) { startScanning() }
-				// If advertising was on and service restarted, it's likely stopped.
-				// UI will re-sync via binding/broadcast from Activity.
-				// For now, just ensure scanning.
-				broadcastState() // Send current state on restart
+			null -> {
+				Log.d(TAG, "Service starting/restarting. Scan: $isScanningNow, Adv: $isAdvertisingNow")
+				if (!isScanningNow) startScanning()
+				broadcastState() // Always send current state on start/restart
 			}
 		}
 		return START_STICKY
@@ -201,27 +212,18 @@ class BluemEmergencyService : Service() {
 
 	@SuppressLint("MissingPermission")
 	private fun startScanning() {
-		if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-			Log.e(TAG, "Cannot start scan: Missing BLUETOOTH_SCAN permission.")
-			showToast("Error: Missing Scan Permission")
-			return
-		}
-		if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-			Log.e(TAG, "Cannot start scan: Missing ACCESS_FINE_LOCATION permission.")
-			showToast("Error: Missing Location Permission for Scan")
-			return
-		}
+		// Redundant permission check since setupBluetoothComponents should cover it, but good for safety
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_SCAN)) return
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && !hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) return
+
 
 		if (isScanningNow) {
 			Log.d(TAG, "Scanning already active.")
-			// broadcastState() // Already active, state should be known
 			return
 		}
 		if (scanner == null) {
-			Log.e(TAG, "Scanner not available to start scanning.")
-			isScanningNow = false // Ensure state
-			updateNotificationBasedOnState()
-			broadcastState()
+			Log.e(TAG, "Scanner null, cannot start scan.")
+			isScanningNow = false; updateNotificationBasedOnState(); broadcastState()
 			return
 		}
 
@@ -230,11 +232,9 @@ class BluemEmergencyService : Service() {
 
 		try {
 			Log.i(TAG, "Attempting to start BLE Scan...")
-			showToast("Starting Scan...")
+			// isScanningNow state will be set by the callback (onScanResult or onScanFailed)
 			scanner?.startScan(scanFilters, scanSettings, leScanCallback)
-			// isScanningNow will be set to true in leScanCallback on success (or false on failure)
-			// For now, assume it might take time, don't set isScanningNow = true here yet.
-			// The callback will handle the state.
+			showToast("Scan initiated...") // Indicate attempt
 		} catch (e: Exception) {
 			Log.e(TAG, "Exception starting BLE scan: ${e.message}", e)
 			isScanningNow = false
@@ -246,26 +246,24 @@ class BluemEmergencyService : Service() {
 
 	@SuppressLint("MissingPermission")
 	private fun stopScanning(force: Boolean = false) {
-		if (!isScanningNow && !force) { // Only stop if active, unless forced
-			Log.d(TAG, "Scanning not active or not forced.")
+		if (!isScanningNow && !force) {
+			Log.d(TAG, "Scanning not active or not forced to stop.")
 			return
 		}
 		if (scanner == null) {
-			Log.w(TAG, "Scanner unavailable, cannot stop scan.")
-			isScanningNow = false // Correct state
-			updateNotificationBasedOnState()
-			broadcastState()
+			Log.w(TAG, "Scanner null, cannot stop scan.")
+			if(isScanningNow) {isScanningNow = false; updateNotificationBasedOnState(); broadcastState()}
 			return
 		}
 
 		try {
 			Log.i(TAG, "Attempting to stop BLE Scan...")
-			showToast("Stopping Scan...")
 			scanner?.stopScan(leScanCallback)
-			isScanningNow = false // Assume stop is synchronous for state purposes
+			isScanningNow = false // Assume stop is successful for state management
+			showToast("Scan stopped.")
 		} catch (e: Exception) {
 			Log.e(TAG, "Exception stopping BLE scan: ${e.message}", e)
-			isScanningNow = false // Assume stopped on error for safety
+			isScanningNow = false // Assume stopped on error
 			showToast("Scan Stop Error: ${e.localizedMessage}")
 		} finally {
 			updateNotificationBasedOnState()
@@ -276,57 +274,50 @@ class BluemEmergencyService : Service() {
 	private val leScanCallback = object : ScanCallback() {
 		override fun onScanResult(callbackType: Int, result: ScanResult?) {
 			super.onScanResult(callbackType, result)
-			// Set scanning to true here if it's the first successful result
-			if (!isScanningNow) {
+			if (!isScanningNow) { // First successful scan result
 				isScanningNow = true
-				Log.i(TAG,"Scan successfully started (first result).")
-				showToast("Scan Started: Receiving signals")
+				Log.i(TAG,"Scan confirmed active (first result).")
+				showToast("Scan Active: Receiving signals")
 				updateNotificationBasedOnState()
 				broadcastState()
 			}
 
 			result?.device?.let { device ->
-				val deviceName = if (ContextCompat.checkSelfPermission(this@BluemEmergencyService, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-					device.name ?: "Unknown"
-				} else { "Unknown (No Connect Perm)" }
-				Log.d(TAG, "Ping received from: Name: $deviceName, Address: ${device.address}, RSSI: ${result.rssi}")
-				// Display a toast for *every* ping for debugging, can be noisy
-				showToast("Ping from: ${device.address}")
-				// TODO: Add logic to parse ScanRecord for specific data from your service UUID
-				// result.scanRecord?.getServiceData(BleConstants.SERVICE_UUID)
+				val deviceAddress = device.address
+				val rssi = result.rssi
+				val deviceName = if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+					try { device.name ?: "N/A" } catch (se: SecurityException) { "N/A (Perm Err)" }
+				} else { "N/A (No Perm)" }
+
+				Log.d(TAG, "Ping from: $deviceName ($deviceAddress), RSSI: $rssi")
+				// showToast("Ping from: $deviceAddress") // Can be very noisy
+
+				// Send ping data to MainActivity via LocalBroadcast
+				val pingIntent = Intent(ACTION_PING_RECEIVED).apply {
+					putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
+					putExtra(EXTRA_RSSI, rssi)
+				}
+				localBroadcastManager.sendBroadcast(pingIntent)
 			}
 		}
 
 		override fun onBatchScanResults(results: MutableList<ScanResult>?) {
 			super.onBatchScanResults(results)
-			// Similar to onScanResult, update isScanningNow if it's the first batch
-			if (!isScanningNow && results?.isNotEmpty() == true) {
+			if (!isScanningNow && results?.isNotEmpty() == true) { // First successful batch
 				isScanningNow = true
-				Log.i(TAG,"Scan successfully started (first batch result).")
-				showToast("Scan Started: Receiving batch signals")
+				Log.i(TAG,"Scan confirmed active (first batch result).")
+				showToast("Scan Active: Receiving batch signals")
 				updateNotificationBasedOnState()
 				broadcastState()
 			}
-			Log.d(TAG, "Batch scan results: ${results?.size ?: 0}")
-			results?.forEach { result ->
-				result.device?.let { device ->
-					Log.d(TAG, "Batch Ping from: ${device.address}")
-				}
-			}
+			results?.forEach { result -> result.device?.let { /* process batch item */ } }
 		}
 
 		override fun onScanFailed(errorCode: Int) {
 			super.onScanFailed(errorCode)
-			Log.e(TAG, "BLE Scan Failed! Error code: $errorCode")
+			Log.e(TAG, "BLE Scan Failed! Code: $errorCode")
 			isScanningNow = false
-			val errorReason = when (errorCode) {
-				SCAN_FAILED_ALREADY_STARTED -> "Already Started"
-				SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "App Registration Failed"
-				SCAN_FAILED_INTERNAL_ERROR -> "Internal Error"
-				SCAN_FAILED_FEATURE_UNSUPPORTED -> "Feature Unsupported"
-				else -> "Unknown Error"
-			}
-			showToast("Scan Failed: $errorReason ($errorCode)")
+			showToast("Scan Failed: Code $errorCode")
 			updateNotificationBasedOnState()
 			broadcastState()
 		}
@@ -334,39 +325,31 @@ class BluemEmergencyService : Service() {
 
 	@SuppressLint("MissingPermission")
 	private fun startAdvertising() {
-		if (!hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-			Log.e(TAG, "Cannot start advertising: Missing BLUETOOTH_ADVERTISE permission.")
-			showToast("Error: Missing Advertise Permission")
-			return
-		}
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)) return
 
 		if (isAdvertisingNow) {
 			Log.d(TAG, "Advertising already active.")
-			// broadcastState() // Already active
 			return
 		}
 		if (advertiser == null) {
-			Log.e(TAG, "Advertiser not available to start advertising.")
-			isAdvertisingNow = false // Ensure state
-			updateNotificationBasedOnState()
-			broadcastState()
+			Log.e(TAG, "Advertiser null, cannot start advertising.")
+			if(isAdvertisingNow) {isAdvertisingNow = false; updateNotificationBasedOnState(); broadcastState()}
 			return
 		}
 
-		val advertiseSettings = AdvertiseSettings.Builder()
+		val settings = AdvertiseSettings.Builder()
 			.setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
 			.setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
 			.setConnectable(false).build()
-
-		val advertiseData = AdvertiseData.Builder()
+		val data = AdvertiseData.Builder()
 			.setIncludeDeviceName(false)
 			.addServiceUuid(BleConstants.SERVICE_UUID).build()
 
 		try {
 			Log.i(TAG, "Attempting to start BLE Advertising...")
-			showToast("Starting Pinging...")
-			// isAdvertisingNow will be set to true in advertiseCallback onStartSuccess
-			advertiser?.startAdvertising(advertiseSettings, advertiseData, advertiseCallback)
+			// State will be set by callback
+			advertiser?.startAdvertising(settings, data, advertiseCallback)
+			showToast("Pinging initiated...")
 		} catch (e: Exception) {
 			Log.e(TAG, "Exception starting BLE advertising: ${e.message}", e)
 			isAdvertisingNow = false
@@ -377,38 +360,27 @@ class BluemEmergencyService : Service() {
 	}
 
 	@SuppressLint("MissingPermission")
-	private fun stopAdvertising(force: Boolean = false) { // Added force parameter
-		if (!isAdvertisingNow && !force) { // Only stop if active unless forced
-			Log.d(TAG, "Not currently advertising or not forced to stop.")
-			// If state is true but shouldn't be, correct it
-			if (isAdvertisingNow) {
-				isAdvertisingNow = false
-				updateNotificationBasedOnState()
-				broadcastState()
-			}
+	private fun stopAdvertising(force: Boolean = false) {
+		if (!isAdvertisingNow && !force) {
+			Log.d(TAG, "Not advertising or not forced to stop.")
 			return
 		}
 		if (advertiser == null) {
-			Log.w(TAG, "Advertiser unavailable, cannot stop advertising.")
-			isAdvertisingNow = false // Correct state
-			updateNotificationBasedOnState()
-			broadcastState()
+			Log.w(TAG, "Advertiser null, cannot stop advertising.")
+			if(isAdvertisingNow) {isAdvertisingNow = false; updateNotificationBasedOnState(); broadcastState()}
 			return
 		}
 
 		try {
 			Log.i(TAG, "Attempting to stop BLE Advertising...")
-			showToast("Stopping Pinging...")
 			advertiser?.stopAdvertising(advertiseCallback)
-			// Crucially, set the state to false *immediately* after initiating the stop.
-			// The callback for stop is not as reliable/existent for success.
-			isAdvertisingNow = false
+			isAdvertisingNow = false // Assume stop is successful for state management
+			showToast("Pinging stopped.")
 		} catch (e: Exception) {
 			Log.e(TAG, "Exception stopping BLE advertising: ${e.message}", e)
-			isAdvertisingNow = false // Assume stopped on error for safety
+			isAdvertisingNow = false // Assume stopped on error
 			showToast("Pinging Stop Error: ${e.localizedMessage}")
 		} finally {
-			// This block will always execute, ensuring state and UI are updated.
 			updateNotificationBasedOnState()
 			broadcastState()
 		}
@@ -417,10 +389,10 @@ class BluemEmergencyService : Service() {
 	private val advertiseCallback = object : AdvertiseCallback() {
 		override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
 			super.onStartSuccess(settingsInEffect)
-			Log.i(TAG, "BLE Advertising started successfully (Callback).")
-			if (!isAdvertisingNow) { // If not already set by optimistic update
+			Log.i(TAG, "BLE Advertising confirmed started (Callback).")
+			if (!isAdvertisingNow) { // If not already optimistically set
 				isAdvertisingNow = true
-				showToast("Pinging Started (Confirmed)")
+				showToast("Pinging Active (Confirmed)")
 				updateNotificationBasedOnState()
 				broadcastState()
 			}
@@ -428,17 +400,9 @@ class BluemEmergencyService : Service() {
 
 		override fun onStartFailure(errorCode: Int) {
 			super.onStartFailure(errorCode)
-			Log.e(TAG, "BLE Advertising failed to start (Callback)! Error code: $errorCode")
+			Log.e(TAG, "BLE Advertising failed to start (Callback)! Code: $errorCode")
 			isAdvertisingNow = false
-			val errorReason = when (errorCode) {
-				ADVERTISE_FAILED_DATA_TOO_LARGE -> "Data Too Large"
-				ADVERTISE_FAILED_TOO_MANY_ADVERTISERS -> "Too Many Advertisers"
-				ADVERTISE_FAILED_ALREADY_STARTED -> "Already Started (odd)"
-				ADVERTISE_FAILED_INTERNAL_ERROR -> "Internal Error"
-				ADVERTISE_FAILED_FEATURE_UNSUPPORTED -> "Feature Unsupported"
-				else -> "Unknown Error"
-			}
-			showToast("Pinging Failed: $errorReason ($errorCode)")
+			showToast("Pinging Failed: Code $errorCode")
 			updateNotificationBasedOnState()
 			broadcastState()
 		}
@@ -449,36 +413,27 @@ class BluemEmergencyService : Service() {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 			val name = "Bluem Beacon Service"
 			val descriptionText = "Keeps Bluem SOS beacon active"
-			val importance = NotificationManager.IMPORTANCE_LOW // Low to be less intrusive
+			val importance = NotificationManager.IMPORTANCE_LOW
 			val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, name, importance).apply {
 				description = descriptionText
-				setSound(null, null) // No sound
-				enableVibration(false) // No vibration
+				setSound(null, null)
+				enableVibration(false)
 			}
 			(getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
-			Log.d(TAG, "Notification channel created/updated.")
 		}
 	}
 
 	private fun createNotification(contentText: String): Notification {
-		// IMPORTANT: Make sure 'R.drawable.ic_notification_bluem' exists in your drawable folders!
-		// It should be a small, single-color icon suitable for the status bar.
-		val icon = R.drawable.ic_launcher_foreground // Replace with your actual notification icon if different
-
-		// TODO: Create PendingIntent to open MainActivity when notification is clicked
-		// val mainActivityIntent = Intent(this, MainActivity::class.java).apply {
-		//     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-		// }
-		// val pendingIntent: PendingIntent = PendingIntent.getActivity(this, 0, mainActivityIntent, PendingIntent.FLAG_IMMUTABLE)
+		// IMPORTANT: Use a real, small, monochrome icon for notifications
+		val icon = R.drawable.ic_launcher_foreground // Ensure this drawable exists!
 
 		return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
 			.setContentTitle("Bluem SOS Beacon")
 			.setContentText(contentText)
 			.setSmallIcon(icon)
-			// .setContentIntent(pendingIntent) // Add when ready
 			.setOngoing(true)
 			.setPriority(NotificationCompat.PRIORITY_LOW)
-			.setVisibility(NotificationCompat.VISIBILITY_PUBLIC) // Or SECRET/PRIVATE as needed
+			.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
 			.build()
 	}
 
@@ -486,8 +441,8 @@ class BluemEmergencyService : Service() {
 		val text = when {
 			isAdvertisingNow && isScanningNow -> "Pinging & Listening"
 			isScanningNow -> "Listening for Pings"
-			isAdvertisingNow -> "Pinging (Scan may be off)" // Edge case, normally scan is always on
-			else -> "Service Idle or Bluetooth Error" // More generic for unhandled states
+			isAdvertisingNow -> "Pinging (Scan Off?)" // Should ideally not happen if scan is always on
+			else -> "Service Idle / BT Error"
 		}
 		updateNotification(text)
 	}
@@ -498,7 +453,6 @@ class BluemEmergencyService : Service() {
 			(getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, notification)
 		} catch (e: Exception) {
 			Log.e(TAG, "Error updating notification: ${e.message}", e)
-			// This can happen if context is bad or channel not set up, esp during service shutdown
 		}
 	}
 
@@ -509,7 +463,7 @@ class BluemEmergencyService : Service() {
 			putExtra(EXTRA_IS_SCANNING, isScanningNow)
 		}
 		localBroadcastManager.sendBroadcast(intent)
-		Log.d(TAG, "Broadcast sent: Adv=$isAdvertisingNow, Scan=$isScanningNow")
+		Log.d(TAG, "Broadcast: Adv=$isAdvertisingNow, Scan=$isScanningNow")
 	}
 
 	// --- Utility ---
@@ -521,21 +475,20 @@ class BluemEmergencyService : Service() {
 		return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 	}
 
-
 	override fun onDestroy() {
 		super.onDestroy()
-		Log.d(TAG, "Service onDestroy: Cleaning up...")
-		stopAdvertising(true) // Force stop advertising
-		stopScanning(true)    // Force stop scanning
-		// stopForeground(true) // This will be called by stopService if it's the path
-		Log.i(TAG,"BluemEmergencyService destroyed.")
+		Log.i(TAG, "Service onDestroy: Cleaning up...")
+		stopAdvertising(true)
+		stopScanning(true)
+		// stopForeground is handled by stopService if that's the path taken
+		Log.i(TAG,"BluemEmergencyService fully destroyed.")
 	}
 
 	private fun stopService() {
 		Log.i(TAG,"Stopping BluemEmergencyService now.")
-		stopAdvertising(true) // Ensure operations are stopped before service dies
+		stopAdvertising(true)
 		stopScanning(true)
-		stopForeground(true) // Remove notification
-		stopSelf() // Stop the service instance
+		stopForeground(STOP_FOREGROUND_REMOVE) // Correct way to remove notification and stop foreground
+		stopSelf()
 	}
 }
