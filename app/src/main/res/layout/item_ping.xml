@@ -13,7 +13,7 @@
         android:layout_height="wrap_content"
         android:textAppearance="@style/TextAppearance.AppCompat.Medium"
         android:textStyle="bold"
-        tools:text="Device: AA:BB:CC:11:22:33"/>
+        tools:text="Device: My Saved Device"/>
 
     <TextView
         android:id="@+id/itemStatusTextView"
@@ -47,5 +47,38 @@
         android:layout_marginTop="2dp"
         android:textAppearance="@style/TextAppearance.AppCompat.Small"
         tools:text="Approx. Dist: 2.50 m"/>
+
+    <!-- Container for Parsed Profile Data -->
+    <LinearLayout
+        android:id="@+id/itemProfileDataLayout"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="6dp"
+        android:paddingTop="4dp"
+        android:visibility="gone"
+        tools:visibility="visible"
+        android:background="@drawable/profile_data_background">
+
+        <TextView
+            android:id="@+id/itemBloodGroupTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Small"
+            tools:text="Blood: O+"/>
+
+        <TextView
+            android:id="@+id/itemLocationTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Small"
+            tools:text="Loc: 34.123, -118.456"/>
+        <TextView
+            android:id="@+id/itemPhoneInfoTextView"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.AppCompat.Small"
+            tools:text="Phone Sfx: ...3456"/>
+    </LinearLayout>
 
 </LinearLayout>

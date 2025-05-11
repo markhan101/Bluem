@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Bluem</string>
+    <string name="refresh_location_button_text">Refresh Location</string>
+    <string name="stop_location_updates_button_text">Stop Getting Location</string>
 </resources>
