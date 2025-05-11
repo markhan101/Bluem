@@ -3,7 +3,11 @@ package com.example.bluem.ble
 import android.content.Context
 import android.os.ParcelUuid
 import com.example.bluem.R
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
+import kotlin.math.pow
 
 
 object BleConstants
@@ -30,24 +34,21 @@ data class PingData(
 	var parsedPhoneSuffixValue: Long? = null, // The numeric phone suffix
 	var parsedSequenceOrTimeValue: Byte? = null // Sequence number or time part from payload
 ) {
-	// Helper to get the best display name
+
 	fun getDisplayName(): String {
 		return customName ?: bleDeviceName ?: deviceAddress
 	}
 
-	// Helper to convert blood group index to a displayable string
-	// Note: This requires access to string resources, ideally done in Adapter or Fragment
-	// For simplicity here, we can hardcode or pass the resources array.
-	// A better way is to have the adapter do this conversion using its context.
+
 	fun getParsedBloodGroupString(context: Context? = null): String? {
 		return parsedBloodGroupIndex?.let { index ->
 			if (context != null) {
 				try {
 					val bloodGroups = context.resources.getStringArray(R.array.blood_groups_array)
 					if (index >= 0 && index < bloodGroups.size) bloodGroups[index] else "Idx $index"
-				} catch (e: Exception) { "Idx $index" } // Fallback if resources not found
+				} catch (e: Exception) { "Idx $index" }
 			} else {
-				// Fallback if no context - less ideal
+
 				when(index) {
 					0 -> "A+" 1 -> "A-" 2 -> "B+" 3 -> "B-" 4 -> "AB+" 5 -> "AB-" 6 -> "O+" 7 -> "O-"
 					8 -> "Unknown"
@@ -55,5 +56,19 @@ data class PingData(
 				}
 			}
 		}
+	}
+}
+
+
+
+object FormatUtils {
+	fun formatFullTimestamp(timestamp: Long): String {
+		val sdf = SimpleDateFormat("HH:mm:ss dd MMM yyyy", Locale.getDefault())
+		return sdf.format(Date(timestamp))
+	}
+
+	fun calculateDistance(rssi: Int, measuredPower: Int = -69, nFactor: Double = 2.5): Double {
+		if (rssi == 0 || rssi < -100) return -1.0
+		return 10.0.pow(((measuredPower.toDouble() - rssi.toDouble()) / (10 * nFactor)))
 	}
 }

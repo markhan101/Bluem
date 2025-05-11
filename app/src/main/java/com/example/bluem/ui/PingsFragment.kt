@@ -10,13 +10,13 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.recyclerview.widget.DefaultItemAnimator
-import androidx.recyclerview.widget.DividerItemDecoration
+
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.bluem.R
 import com.example.bluem.ui.adapter.PingAdapter
-import com.example.bluem.ble.PingData // Make sure this is the correct import for your PingData model
-import com.example.bluem.ui.PingInteractionListener // Import the listener interface
+import com.example.bluem.ble.PingData
+import com.example.bluem.ui.PingInteractionListener
 import java.util.concurrent.ConcurrentHashMap
 
 class PingsFragment : Fragment() {
@@ -24,10 +24,10 @@ class PingsFragment : Fragment() {
 	private val TAG = "PingsFragment"
 	private lateinit var recyclerView: RecyclerView
 	private lateinit var pingAdapter: PingAdapter
-	private val pingList = mutableListOf<PingData>() // Internal list for the adapter
+	private val pingList = mutableListOf<PingData>()
 
 	private val deviceLastUiUpdateTime = ConcurrentHashMap<String, Long>()
-	private val UI_UPDATE_DEBOUNCE_MS = 2000L // Update UI for an existing device at most every 2 seconds
+	private val UI_UPDATE_DEBOUNCE_MS = 2000L
 
 
 	private var interactionListener: PingInteractionListener? = null
@@ -35,12 +35,12 @@ class PingsFragment : Fragment() {
 	// Handler for timeout checks
 	private val handler = Handler(Looper.getMainLooper())
 	private lateinit var pingTimeoutRunnable: Runnable
-	private val PING_TIMEOUT_MS = 30000L // 30 seconds, devices not heard from in this time are marked inactive
-	private val CHECK_INTERVAL_MS = 5000L // Check for timeouts every 5 seconds
+	private val PING_TIMEOUT_MS = 30000L
+	private val CHECK_INTERVAL_MS = 5000L
 
 	override fun onAttach(context: Context) {
 		super.onAttach(context)
-		// Ensure the hosting activity implements the callback interface
+
 		if (context is PingInteractionListener) {
 			interactionListener = context
 		} else {
@@ -52,7 +52,7 @@ class PingsFragment : Fragment() {
 		inflater: LayoutInflater, container: ViewGroup?,
 		savedInstanceState: Bundle?
 	): View? {
-		// Inflate the layout for this fragment
+
 		val view = inflater.inflate(R.layout.fragment_pings, container, false)
 		recyclerView = view.findViewById(R.id.pingsRecyclerView)
 		return view
@@ -63,24 +63,26 @@ class PingsFragment : Fragment() {
 		setupRecyclerView()
 		setupPingTimeoutChecker()
 		Log.d(TAG, "PingsFragment onViewCreated")
-		// If there are any initially known pings (e.g. from a ViewModel), load them here.
-		// For now, it starts empty and relies on live updates.
+
 	}
 
 	private fun setupRecyclerView() {
-		// Make sure listener is not null, it should be set in onAttach
+
 		val listener = interactionListener ?: run {
-			Log.e(TAG, "PingInteractionListener is null during setupRecyclerView!")
-			// Fallback or throw exception. For now, let's proceed but log error.
-			// This indicates a lifecycle issue if it happens.
-			// A safer approach might be to delay adapter creation until listener is confirmed.
-			// However, onAttach is called before onCreateView/onViewCreated.
-			object : PingInteractionListener { // Dummy listener to prevent crash, but logs error
-				override fun onPingLongClicked(pingData: PingData) {
-					Log.e(TAG, "Dummy listener: onPingLongClicked for ${pingData.deviceAddress}")
+			Log.e(TAG, "CRITICAL: PingInteractionListener is null during setupRecyclerView! Using dummy listener. Check onAttach/onDetach lifecycle.")
+
+			object : PingInteractionListener {
+				override fun onPingClickedForDetails(pingData: PingData) { // <-- ADDED THIS
+					Log.e(TAG, "Dummy listener: onPingClickedForDetails for ${pingData.deviceAddress}. THIS SHOULD NOT HAPPEN.")
+
 				}
+
+				override fun onPingLongClicked(pingData: PingData) {
+					Log.e(TAG, "Dummy listener: onPingLongClicked for ${pingData.deviceAddress}. THIS SHOULD NOT HAPPEN.")
+				}
+
 				override fun getCustomNameForDevice(deviceAddress: String): String? {
-					Log.e(TAG, "Dummy listener: getCustomNameForDevice for $deviceAddress")
+					Log.e(TAG, "Dummy listener: getCustomNameForDevice for $deviceAddress. THIS SHOULD NOT HAPPEN.")
 					return null
 				}
 			}
@@ -90,9 +92,8 @@ class PingsFragment : Fragment() {
 		recyclerView.apply {
 			layoutManager = LinearLayoutManager(requireContext())
 			adapter = pingAdapter
-			itemAnimator = DefaultItemAnimator() // Adds default animations for item changes
-			// Optional: Add a divider
-			// addItemDecoration(DividerItemDecoration(requireContext(), LinearLayoutManager.VERTICAL))
+			itemAnimator = DefaultItemAnimator()
+
 		}
 		Log.d(TAG, "RecyclerView setup complete.")
 	}
@@ -100,7 +101,7 @@ class PingsFragment : Fragment() {
 	private fun setupPingTimeoutChecker() {
 		pingTimeoutRunnable = Runnable {
 			checkAndMarkInactivePings()
-			// Schedule the next check only if the fragment is still in a resumed state
+
 			if (isResumed) {
 				handler.postDelayed(pingTimeoutRunnable, CHECK_INTERVAL_MS)
 			}
@@ -109,7 +110,7 @@ class PingsFragment : Fragment() {
 
 	override fun onResume() {
 		super.onResume()
-		// Start the timeout checker when the fragment is resumed
+
 		handler.removeCallbacks(pingTimeoutRunnable) // Remove any existing callbacks first
 		handler.postDelayed(pingTimeoutRunnable, CHECK_INTERVAL_MS)
 		Log.d(TAG, "Ping timeout checker started/resumed.")
@@ -117,15 +118,12 @@ class PingsFragment : Fragment() {
 
 	override fun onPause() {
 		super.onPause()
-		// Stop the timeout checker when the fragment is paused
+
 		handler.removeCallbacks(pingTimeoutRunnable)
 		Log.d(TAG, "Ping timeout checker paused.")
 	}
 
-	/**
-	 * Called by MainActivity to update or add a new ping.
-	 * This method should handle getting custom names via the listener.
-	 */
+
 	fun updatePings(incomingPingData: PingData) {
 		activity?.runOnUiThread {
 			Log.d(TAG, "Received ping for processing: ${incomingPingData.deviceAddress}, RSSI: ${incomingPingData.rssi}")
@@ -152,8 +150,7 @@ class PingsFragment : Fragment() {
 					// Log.v(TAG, "Debounced UI update for existing device: $deviceAddress. Data updated silently.")
 					// Silently update the underlying data model if needed, but don't call notifyItemChanged yet.
 					// For now, we only update if debounce passes. This means RSSI/timestamp in UI won't be real-time.
-					// A more complex approach would update the PingData in pingList but only call notifyItemChanged
-					// when the debounce timer allows. For simplicity, we just update fully on debounce pass.
+
 					pingList[existingPingIndex].timestamp = incomingPingData.timestamp // Keep latest timestamp
 					pingList[existingPingIndex].rssi = incomingPingData.rssi           // Keep latest RSSI
 					if (!pingList[existingPingIndex].isActive) { // If it was inactive, force an update

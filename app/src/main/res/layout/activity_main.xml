@@ -16,7 +16,9 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            app:popupTheme="@style/ThemeOverlay.AppCompat.Light" />
+            app:popupTheme="@style/ThemeOverlay.AppCompat.Light"
+             android:text="Bluem"
+             />
 
         <com.google.android.material.tabs.TabLayout
             android:id="@+id/tabLayout"
@@ -40,6 +42,6 @@
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:contentDescription="Start or Stop Pinging"
-        app:srcCompat="@android:drawable/ic_popup_sync" />
+        app:srcCompat="@drawable/ic_start_ping" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

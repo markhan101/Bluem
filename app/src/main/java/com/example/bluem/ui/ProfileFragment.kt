@@ -149,8 +149,6 @@ class ProfileFragment : Fragment() {
 		}
 	}
 
-	// This method is called when a new location is actually fetched.
-	// It updates the UI AND saves the new location to SharedPreferences.
 	private fun newLocationReceived(latitude: Double, longitude: Double) {
 		updateLocationDisplayUI(latitude, longitude) // Update UI elements
 

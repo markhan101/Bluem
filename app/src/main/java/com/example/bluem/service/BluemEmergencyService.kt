@@ -1,6 +1,6 @@
 package com.example.bluem.service
 
-import android.Manifest // For @SuppressLint
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -17,9 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-// Remove Parcelable and kotlinx.parcelize.Parcelize if not using Parcelable ParsedProfileData
-// import android.os.Parcelable
-// import kotlinx.parcelize.Parcelize
+
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -27,7 +25,7 @@ import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.example.bluem.R
 import com.example.bluem.ble.BleConstants
-import com.example.bluem.ui.ProfileFragment // For SharedPreferences keys
+import com.example.bluem.ui.ProfileFragment
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.roundToInt
@@ -50,8 +48,7 @@ class BluemEmergencyService : Service() {
 	private lateinit var localBroadcastManager: LocalBroadcastManager
 	private val mainHandler = Handler(Looper.getMainLooper())
 
-	// Data class for parsed profile information from pings
-	// Not making it Parcelable for this version to keep it simpler with individual extras
+
 	data class ParsedProfileData(
 		val bloodGroupIndex: Int,
 		val hasPhoneNumberFlag: Boolean,
@@ -189,13 +186,9 @@ class BluemEmergencyService : Service() {
 
 		val scanFilters = mutableListOf<ScanFilter>()
 
-		// *** THIS IS THE PRIMARY FILTER ***
-		// Create a filter for your specific Manufacturer ID.
-		// The second argument (manufacturerDataMask) can be null if you want to match any data
-		// for this manufacturer ID, or you can provide a mask if you only care about certain bits
-		// in the manufacturer data matching. For now, matching the ID is enough.
-		val manufacturerData = ByteArray(0) // Empty data, just match ID
-		val manufacturerDataMask = ByteArray(0) // Empty mask
+
+		val manufacturerData = ByteArray(0)
+		val manufacturerDataMask = ByteArray(0)
 
 		scanFilters.add(
 			ScanFilter.Builder()
@@ -205,13 +198,10 @@ class BluemEmergencyService : Service() {
 		Log.i(TAG, "Scan filter set for Manufacturer ID: ${BleConstants.BLUEM_MANUFACTURER_ID.toString(16)}")
 
 
-		// You could also add a filter for your Service UUID if devices might advertise that too,
-		// but for custom data, ManufacturerData is usually the primary way.
-		// scanFilters.add(ScanFilter.Builder().setServiceUuid(BleConstants.SERVICE_UUID).build())
 
 		val scanSettings = ScanSettings.Builder()
 			.setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY) // For responsiveness
-			.setReportDelay(0) // Report results immediately (no batching for this strategy)
+			.setReportDelay(0)
 			.build()
 
 		try {
@@ -234,7 +224,7 @@ class BluemEmergencyService : Service() {
 		} catch (e: Exception) {
 			Log.e(TAG, "Exception stopping scan: ${e.message}", e); isScanningNow = false
 		} finally {
-			// showToast("Scan stopped."); // Can be noisy if called frequently
+
 			updateNotificationBasedOnState(); broadcastState()
 		}
 	}
@@ -270,7 +260,7 @@ class BluemEmergencyService : Service() {
 					putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
 					putExtra(EXTRA_BLE_DEVICE_NAME, bleName)
 					putExtra(EXTRA_RSSI, rssi)
-					parsedProfile?.let { // Add individual fields to intent
+					parsedProfile?.let {
 						putExtra(EXTRA_PROFILE_BLOOD_GROUP_IDX, it.bloodGroupIndex)
 						putExtra(EXTRA_PROFILE_HAS_PHONE, it.hasPhoneNumberFlag)
 						putExtra(EXTRA_PROFILE_LATITUDE, it.latitude)
@@ -294,7 +284,7 @@ class BluemEmergencyService : Service() {
 		if (isAdvertisingNow) { Log.d(TAG, "Advertising already active."); return }
 		if (advertiser == null) { Log.e(TAG, "Advertiser null."); if(isAdvertisingNow){isAdvertisingNow=false;updateNotificationBasedOnState();broadcastState()}; return }
 
-		val manufacturerPayloadWithProtocolId = buildProfilePingPayload() // Includes protocol ID
+		val manufacturerPayloadWithProtocolId = buildProfilePingPayload()
 		if (manufacturerPayloadWithProtocolId == null) {
 			Log.e(TAG, "Failed to build adv payload."); showToast("Error: Ping data incomplete")
 			if(isAdvertisingNow){isAdvertisingNow=false;updateNotificationBasedOnState();broadcastState()}
@@ -302,21 +292,28 @@ class BluemEmergencyService : Service() {
 		}
 
 		val settings = AdvertiseSettings.Builder()
-			.setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-			.setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM).setConnectable(false).build()
+			.setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER) // Targets ~1 second interval
+			.setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM) // Or HIGH for better range
+			.setConnectable(false)
+			.setTimeout(0)
+			.build()
+
 		val advertiseData = AdvertiseData.Builder()
-			.setIncludeDeviceName(false).setIncludeTxPowerLevel(false)
+			.setIncludeDeviceName(false)
+			.setIncludeTxPowerLevel(false)
 			.addManufacturerData(BleConstants.BLUEM_MANUFACTURER_ID, manufacturerPayloadWithProtocolId)
 			.build()
 
 		try {
-			Log.i(TAG, "Starting Adv with ManuID ${BleConstants.BLUEM_MANUFACTURER_ID.toString(16)} and Full Payload: ${manufacturerPayloadWithProtocolId.toHex()}")
+			Log.i(TAG, "Starting Adv with interval ~3-5s, ManuID ${BleConstants.BLUEM_MANUFACTURER_ID.toString(16)}, Payload: ${manufacturerPayloadWithProtocolId.toHex()}")
 			advertiser?.startAdvertising(settings, advertiseData, advertiseCallback)
+
 		} catch (e: Exception) {
-			Log.e(TAG, "Exception starting adv: ${e.message}", e); isAdvertisingNow = false
+			Log.e(TAG, "Exception starting advertising: ${e.message}", e); isAdvertisingNow = false
 			showToast("Pinging Start Error"); updateNotificationBasedOnState(); broadcastState()
 		}
 	}
+
 
 	// Payload built here INCLUDES our Bluem Protocol ID as the FIRST byte
 	private fun buildProfilePingPayload(): ByteArray? {
@@ -331,14 +328,7 @@ class BluemEmergencyService : Service() {
 		val latitude = latString?.toDoubleOrNull() ?: 91.0 // Invalid placeholder for latitude
 		val longitude = lonString?.toDoubleOrNull() ?: 181.0 // Invalid placeholder for longitude
 
-		// Payload structure:
-		// Byte 0: Protocol ID (ours, Bluem)
-		// Byte 1: Blood Group (4 bits), HasPhone Flag (1 bit), Reserved (3 bits)
-		// Byte 2-3: Latitude (Short, scaled * 100)
-		// Byte 4-5: Longitude (Short, scaled * 100)
-		// Byte 6-9: Phone Suffix (Int, last 7 digits)
-		// Byte 10: Sequence/Time (Byte)
-		// Total = 11 bytes.
+
 		try {
 			val buffer = ByteBuffer.allocate(11) // Size of our custom data section
 			buffer.order(ByteOrder.LITTLE_ENDIAN)
@@ -378,7 +368,7 @@ class BluemEmergencyService : Service() {
 			val hasPhoneFlag = (bloodAndFlags.toInt() and 0x10) != 0
 			val lat = buffer.short.toDouble() / 100.0
 			val lon = buffer.short.toDouble() / 100.0
-			val phoneSfx = buffer.int.toLong() // Read as int, then to long for consistency
+			val phoneSfx = buffer.int.toLong()
 			val seqTime = buffer.get()
 			return ParsedProfileData(bloodGroupIdx, hasPhoneFlag, lat, lon, phoneSfx, seqTime)
 		} catch (e: Exception) {
@@ -448,7 +438,7 @@ class BluemEmergencyService : Service() {
 			putExtra(EXTRA_IS_ADVERTISING, isAdvertisingNow); putExtra(EXTRA_IS_SCANNING, isScanningNow)
 		}
 		localBroadcastManager.sendBroadcast(intent)
-		// Log.d(TAG, "Broadcast: Adv=$isAdvertisingNow, Scan=$isScanningNow") // Can be noisy
+
 	}
 
 	private fun showToast(message: String) { mainHandler.post { Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show() } }

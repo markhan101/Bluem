@@ -6,12 +6,17 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.*
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Log
 import android.view.LayoutInflater
+import android.view.View
+import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -19,11 +24,13 @@ import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.viewpager2.widget.ViewPager2
 import com.example.bluem.R
+import com.example.bluem.ble.FormatUtils
 import com.example.bluem.ble.PingData
 import com.example.bluem.service.BluemEmergencyService
 import com.example.bluem.ui.ViewPagerAdapter
 import com.example.bluem.ui.PingInteractionListener
 import com.example.bluem.ui.PingsFragment
+import com.example.bluem.ui.adapter.PingAdapter
 import com.google.android.material.floatingactionbutton.FloatingActionButton
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
@@ -144,13 +151,13 @@ class MainActivity : AppCompatActivity(), PingInteractionListener {
 
 	private fun updateFabState() {
 		runOnUiThread {
-			// Ensure you have these drawables: ic_warning, ic_bt_disabled, ic_sync_problem, ic_pause_ping, ic_start_ping
+
 			val iconRes = when {
 				!requiredPermissionsGranted -> R.drawable.ic_warning
-				!isBluetoothEnabled() -> R.drawable.ic_warning
-				!isBound -> R.drawable.ic_warning
-				isServicePinging -> R.drawable.ic_warning
-				else -> R.drawable.ic_warning
+				!isBluetoothEnabled() -> R.drawable.ic_bluetooth_disabled
+				!isBound -> R.drawable.ic_sync_problem
+				isServicePinging -> R.drawable.ic_pause_ping
+				else -> R.drawable.ic_start_ping
 			}
 			pingFab.setImageResource(iconRes)
 			pingFab.isEnabled = requiredPermissionsGranted && isBluetoothEnabled() && isBound
@@ -167,7 +174,7 @@ class MainActivity : AppCompatActivity(), PingInteractionListener {
 		val toGrant = perms.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }.toTypedArray()
 		if (toGrant.isEmpty()) { requiredPermissionsGranted = true; tryStartServiceAndBind() }
 		else { requiredPermissionsGranted = false; requestMultiplePermissions.launch(toGrant) }
-		// updateFabState() // Called by callbacks or at end of checkAndRequestPermissions
+
 	}
 
 	private fun isBluetoothEnabled(): Boolean = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter?.isEnabled == true
@@ -204,7 +211,90 @@ class MainActivity : AppCompatActivity(), PingInteractionListener {
 		startService(Intent(this, BluemEmergencyService::class.java).apply { this.action = action })
 	}
 
-	override fun onPingLongClicked(pingData: PingData) { showSaveNameDialog(pingData) }
+	override fun onPingClickedForDetails(pingData: PingData) {
+		showPingDetailsDialog(pingData)
+	}
+
+	override fun onPingLongClicked(pingData: PingData) {
+		showSaveNameDialog(pingData)
+	}
+
+	private fun showPingDetailsDialog(pingData: PingData) {
+		val dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_ping_details, null)
+
+		// Find views in the dialog layout
+		val detailDeviceNameTextView: TextView = dialogView.findViewById(R.id.detailDeviceNameTextView)
+		val detailStatusTextView: TextView = dialogView.findViewById(R.id.detailStatusTextView) // Corrected variable name
+		val detailLastSeenTextView: TextView = dialogView.findViewById(R.id.detailLastSeenTextView) // Corrected variable name
+		val detailRssiTextView: TextView = dialogView.findViewById(R.id.detailRssiTextView)       // Corrected variable name
+		val detailDistanceTextView: TextView = dialogView.findViewById(R.id.detailDistanceTextView) // Corrected variable name
+		val detailProfileDataLayout: LinearLayout = dialogView.findViewById(R.id.detailProfileDataLayout)
+		val detailBloodGroupTextView: TextView = dialogView.findViewById(R.id.detailBloodGroupTextView)
+		val detailLocationTextView: TextView = dialogView.findViewById(R.id.detailLocationTextView)
+		val detailPhoneInfoTextView: TextView = dialogView.findViewById(R.id.detailPhoneInfoTextView)
+		val setCustomNameButton: Button = dialogView.findViewById(R.id.buttonSetCustomName)
+
+
+		// Populate dialog views
+		detailDeviceNameTextView.text = pingData.getDisplayName()
+		detailRssiTextView.text = "RSSI: ${pingData.rssi} dBm"
+
+		if (pingData.isActive) {
+			detailStatusTextView.text = "Status: Actively Pinging" // Use the dialog's TextView
+			detailStatusTextView.setTextColor(Color.parseColor("#FF4CAF50")) // Green
+			detailLastSeenTextView.text = "Last Ping: ${FormatUtils.formatFullTimestamp(pingData.timestamp)}" // Use FormatUtils
+			val distance = FormatUtils.calculateDistance(pingData.rssi)
+			if (distance >= 0) {
+				detailDistanceTextView.text = "Approx. Dist: ${"%.1f".format(distance)} m"
+				detailDistanceTextView.visibility = View.VISIBLE
+			} else {
+				detailDistanceTextView.text = "Approx. Dist: N/A"
+				detailDistanceTextView.visibility = View.VISIBLE
+			}
+		} else {
+			detailStatusTextView.text = "Status: No Recent Pings"
+			detailStatusTextView.setTextColor(Color.parseColor("#FFF44336")) // Red
+			detailLastSeenTextView.text = "Last Seen: ${FormatUtils.formatFullTimestamp(pingData.timestamp)}" // *** USE FormatUtils HERE TOO ***
+			detailDistanceTextView.visibility = View.GONE
+		}
+
+		var profileInfoAvailableInDialog = false
+		pingData.getParsedBloodGroupString(this)?.let { bg -> // Pass context if needed by PingData
+			detailBloodGroupTextView.text = "Blood Group: $bg"
+			profileInfoAvailableInDialog = true
+		} ?: run { detailBloodGroupTextView.text = "Blood Group: N/A" }
+
+
+		if (pingData.parsedLatitude != null && pingData.parsedLongitude != null &&
+			pingData.parsedLatitude != 91.0 && pingData.parsedLongitude != 181.0) { // Check for valid placeholder
+			detailLocationTextView.text = "Reported Loc: ${"%.4f".format(pingData.parsedLatitude)}, ${"%.4f".format(pingData.parsedLongitude)}"
+			profileInfoAvailableInDialog = true
+		} else {
+			detailLocationTextView.text = "Reported Loc: N/A"
+		}
+
+		if (pingData.parsedHasPhoneNumberFlag == true && pingData.parsedPhoneSuffixValue != null && pingData.parsedPhoneSuffixValue != 0L) {
+			detailPhoneInfoTextView.text = "Phone Suffix: ...${pingData.parsedPhoneSuffixValue.toString().takeLast(4)}"
+			detailPhoneInfoTextView.visibility = View.VISIBLE
+			profileInfoAvailableInDialog = true
+		} else {
+			detailPhoneInfoTextView.visibility = View.GONE
+		}
+		detailProfileDataLayout.visibility = if (profileInfoAvailableInDialog) View.VISIBLE else View.GONE
+
+
+		val dialog = AlertDialog.Builder(this)
+			.setView(dialogView)
+			.setPositiveButton("Close") { d, _ -> d.dismiss() }
+			.create()
+
+		setCustomNameButton.setOnClickListener {
+			showSaveNameDialog(pingData)
+			dialog.dismiss()
+		}
+
+		dialog.show()
+	}
 	override fun getCustomNameForDevice(deviceAddress: String): String? =
 		getSharedPreferences(SHARED_PREFS_CUSTOM_NAMES, Context.MODE_PRIVATE).getString(deviceAddress, null)
 

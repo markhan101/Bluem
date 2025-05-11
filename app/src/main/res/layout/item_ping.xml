@@ -1,84 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/pingItemLayoutRoot"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="12dp"
-    android:background="?android:attr/selectableItemBackground">
+    android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true">
 
     <TextView
-        android:id="@+id/itemAddressTextView"
+        android:id="@+id/itemDisplayNameTextView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textAppearance="@style/TextAppearance.AppCompat.Medium"
         android:textStyle="bold"
-        tools:text="Device: My Saved Device"/>
+        tools:text="Device: My Saved Device Name"/>
 
     <TextView
-        android:id="@+id/itemStatusTextView"
+        android:id="@+id/itemStatusSummaryTextView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
         android:textAppearance="@style/TextAppearance.AppCompat.Small"
-        android:textStyle="italic"
         tools:text="Status: Actively Pinging" />
 
     <TextView
-        android:id="@+id/itemTimeTextView"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:textAppearance="@style/TextAppearance.AppCompat.Small"
-        tools:text="Last Ping: 10:30:45 01 Jan"/>
-
-    <TextView
-        android:id="@+id/itemRssiTextView"
+        android:id="@+id/itemLastSeenSummaryTextView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:textAppearance="@style/TextAppearance.AppCompat.Small"
-        tools:text="RSSI: -65 dBm"/>
-
-    <TextView
-        android:id="@+id/itemDistanceTextView"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:textAppearance="@style/TextAppearance.AppCompat.Small"
-        tools:text="Approx. Dist: 2.50 m"/>
-
-    <!-- Container for Parsed Profile Data -->
-    <LinearLayout
-        android:id="@+id/itemProfileDataLayout"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_marginTop="6dp"
-        android:paddingTop="4dp"
-        android:visibility="gone"
-        tools:visibility="visible"
-        android:background="@drawable/profile_data_background">
-
-        <TextView
-            android:id="@+id/itemBloodGroupTextView"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textAppearance="@style/TextAppearance.AppCompat.Small"
-            tools:text="Blood: O+"/>
-
-        <TextView
-            android:id="@+id/itemLocationTextView"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textAppearance="@style/TextAppearance.AppCompat.Small"
-            tools:text="Loc: 34.123, -118.456"/>
-        <TextView
-            android:id="@+id/itemPhoneInfoTextView"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textAppearance="@style/TextAppearance.AppCompat.Small"
-            tools:text="Phone Sfx: ...3456"/>
-    </LinearLayout>
+        tools:text="Last Ping: 10:30:45"/>
 
 </LinearLayout>
